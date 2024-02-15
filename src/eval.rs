@@ -12,187 +12,181 @@ use crate::language::*;
 #[derive(Debug)]
 pub struct InputState(Vec<String>);
 
-/// Option is used to represent the undefined value ⊥
-pub fn eval(p: &StringExpr, sigma: &InputState) -> Option<String> {
-    for (b, e) in p.iter() {
-        if eval_bool(b, sigma) {
-            return eval_trace(e, sigma);
+pub trait Eval {
+    fn eval(&self, sigma: &InputState) -> Option<String>;
+}
+pub trait EvalBool<T> {
+    fn eval(&self, sigma: T) -> bool;
+}
+
+trait SubStitute {
+    fn substitute(&self, k: usize) -> Self;
+}
+
+impl Eval for StringExpr {
+    /// Option is used to represent the undefined value ⊥
+    fn eval(&self, sigma: &InputState) -> Option<String> {
+        for (b, e) in &self.0 {
+            if b.eval(sigma) {
+                return e.eval(sigma);
+            }
+        }
+        None
+    }
+}
+
+impl EvalBool<&InputState> for Bool {
+    fn eval(&self, sigma: &InputState) -> bool {
+        for c in &self.0 {
+            if c.eval(sigma) {
+                return true;
+            }
+        }
+        false
+    }
+}
+
+impl EvalBool<&InputState> for Conjunct {
+    fn eval(&self, sigma: &InputState) -> bool {
+        for p in &self.0 {
+            if !p.eval(sigma) {
+                return false;
+            }
+        }
+        true
+    }
+}
+
+impl EvalBool<&InputState> for Predicate {
+    fn eval(&self, sigma: &InputState) -> bool {
+        match self {
+            Predicate::Is(m) => m.eval(sigma),
+            Predicate::Not(m) => !m.eval(sigma),
         }
     }
-    None
 }
 
-pub fn eval_bool(b: &Bool, sigma: &InputState) -> bool {
-    for c in b.iter() {
-        if eval_conjunct(c, sigma) {
-            return true;
+impl EvalBool<&InputState> for Match {
+    fn eval(&self, sigma: &InputState) -> bool {
+        let s = &sigma[self.v];
+        let r = &self.r;
+        r.find_all_matches(s).collect::<Vec<_>>().len() >= self.k
+    }
+}
+
+impl EvalBool<&str> for RegularExpr {
+    fn eval(&self, s: &str) -> bool {
+        // empty sequence + empty string
+        if s.is_empty() {
+            return self.0.is_empty();
         }
-    }
-    false
-}
-
-pub fn eval_conjunct(c: &Conjunct, sigma: &InputState) -> bool {
-    for p in c.iter() {
-        if !eval_predicate(p, sigma) {
-            return false;
-        }
-    }
-    true
-}
-
-pub fn eval_predicate(p: &Predicate, sigma: &InputState) -> bool {
-    match p {
-        Predicate::Is(m) => eval_match(m, sigma),
-        Predicate::Not(m) => !eval_match(m, sigma),
-    }
-}
-
-pub fn eval_match(m: &Match, sigma: &InputState) -> bool {
-    let s = &sigma[m.v];
-    let r = &m.r;
-    find_all_matches(r, s).collect::<Vec<_>>().len() >= m.k
-}
-
-pub fn eval_regular(r: &RegularExpr, s: &str) -> bool {
-    // empty sequence + empty string
-    if s.is_empty() {
-        return r.is_empty();
-    }
-    let mut s = s.chars().peekable();
-    for token in r.iter() {
-        // exist other token to match but string end
-        if s.peek().is_none() {
-            return false;
-        }
-        match token {
-            Token::Special(special) => {
-                let c = s.next().unwrap();
-                if !special.matched(&c) {
-                    return false;
+        let mut s = s.chars().peekable();
+        for token in &self.0 {
+            // exist other token to match but string end
+            if s.peek().is_none() {
+                return false;
+            }
+            match token {
+                Token::Special(special) => {
+                    let c = s.next().unwrap();
+                    if !special.matched(&c) {
+                        return false;
+                    }
+                }
+                Token::OneOrMore(token) => {
+                    // first character must matched, C+
+                    let c = s.next().unwrap();
+                    if !token.matched(&c) {
+                        return false;
+                    }
+                    while s.next_if(|c| token.matched(c)).is_some() {}
+                }
+                Token::ExcludeOneOrMore(token) => {
+                    // first character must not matched, not C+
+                    let c = s.next().unwrap();
+                    if token.matched(&c) {
+                        return false;
+                    }
+                    while s.next_if(|c| !token.matched(c)).is_some() {}
                 }
             }
-            Token::OneOrMore(token) => {
-                // first character must matched, C+
-                let c = s.next().unwrap();
-                if !token.matched(&c) {
-                    return false;
+        }
+        s.peek().is_none()
+    }
+}
+
+impl Eval for TraceExpr {
+    fn eval(&self, sigma: &InputState) -> Option<String> {
+        self.0.iter().try_fold("".to_string(), |acc, f| {
+            let s1 = f.eval(sigma)?;
+            Some(acc + &s1)
+        })
+    }
+}
+
+impl Eval for AtomicExpr {
+    fn eval(&self, sigma: &InputState) -> Option<String> {
+        match self {
+            AtomicExpr::SubStr { v, p1, p2 } => {
+                let p1 = eval_position(p1, &sigma[*v])?;
+                let p2 = eval_position(p2, &sigma[*v])?;
+                // Paper use [p1..p2] and [p1..=p2] mix!
+                Some(sigma[*v][p1..p2].to_string())
+            }
+            AtomicExpr::ConstStr(s) => Some(s.clone()),
+            AtomicExpr::Loop { e } => Some(eval_loop(e, 1, sigma)),
+        }
+    }
+}
+
+impl SubStitute for TraceExpr {
+    fn substitute(&self, k: usize) -> TraceExpr {
+        TraceExpr(self.0.iter().map(|f| (f.substitute(k))).collect())
+    }
+}
+
+impl SubStitute for AtomicExpr {
+    fn substitute(&self, k: usize) -> AtomicExpr {
+        match self {
+            AtomicExpr::SubStr { v, p1, p2 } => AtomicExpr::SubStr {
+                v: *v,
+                p1: p1.substitute(k),
+                p2: p2.substitute(k),
+            },
+            AtomicExpr::ConstStr(_) => self.clone(),
+            AtomicExpr::Loop { e: _ } => unreachable!("loop twice"),
+        }
+    }
+}
+
+impl SubStitute for Position {
+    fn substitute(&self, k: usize) -> Position {
+        match self {
+            Position::CPos(_) => self.clone(),
+            Position::Pos { r1, r2, c } => {
+                let c = match c {
+                    IntegerExpr::Constant(_) => *c,
+                    IntegerExpr::Bound => IntegerExpr::Constant(k as i32),
+                };
+                Position::Pos {
+                    r1: r1.clone(),
+                    r2: r2.clone(),
+                    c,
                 }
-                while s.next_if(|c| token.matched(c)).is_some() {}
-            }
-            Token::ExcludeOneOrMore(token) => {
-                // first character must not matched, not C+
-                let c = s.next().unwrap();
-                if token.matched(&c) {
-                    return false;
-                }
-                while s.next_if(|c| !token.matched(c)).is_some() {}
-            }
-        }
-    }
-    s.peek().is_none()
-}
-
-pub fn eval_trace(e: &TraceExpr, sigma: &InputState) -> Option<String> {
-    e.iter().try_fold("".to_string(), |acc, f| {
-        let s1 = eval_atomic(f, sigma)?;
-        Some(acc + &s1)
-    })
-}
-
-pub fn eval_atomic(f: &AtomicExpr, sigma: &InputState) -> Option<String> {
-    match f {
-        AtomicExpr::SubStr { v, p1, p2 } => {
-            let p1 = eval_position(p1, &sigma[*v])?;
-            let p2 = eval_position(p2, &sigma[*v])?;
-            // Paper use [p1..p2] and [p1..=p2] mix!
-            Some(sigma[*v][p1..p2].to_string())
-        }
-        AtomicExpr::ConstStr(s) => Some(s.clone()),
-        AtomicExpr::Loop { e } => Some(eval_loop(e, 1, sigma)),
-    }
-}
-
-fn substitute_trace(e: &TraceExpr, k: usize) -> TraceExpr {
-    TraceExpr(e.iter().map(|f| substitute_atomic(f, k)).collect())
-}
-
-fn substitute_atomic(f: &AtomicExpr, k: usize) -> AtomicExpr {
-    match f {
-        AtomicExpr::SubStr { v, p1, p2 } => AtomicExpr::SubStr {
-            v: *v,
-            p1: substitute_position(p1, k),
-            p2: substitute_position(p2, k),
-        },
-        AtomicExpr::ConstStr(_) => f.clone(),
-        AtomicExpr::Loop { e: _ } => todo!("loop twice"),
-    }
-}
-
-fn substitute_position(p: &Position, k: usize) -> Position {
-    match p {
-        Position::CPos(_) => p.clone(),
-        Position::Pos { r1, r2, c } => {
-            let c = match c {
-                IntegerExpr::Constant(_) => c.clone(),
-                IntegerExpr::Bound => IntegerExpr::Constant(k as i32),
-            };
-            Position::Pos {
-                r1: r1.clone(),
-                r2: r2.clone(),
-                c,
             }
         }
     }
 }
 
-pub fn eval_loop(e: &TraceExpr, k: usize, sigma: &InputState) -> String {
-    let t = substitute_trace(e, k);
-    match eval_trace(&t, sigma) {
+fn eval_loop(e: &TraceExpr, k: usize, sigma: &InputState) -> String {
+    let t = e.substitute(k);
+    match t.eval(sigma) {
         Some(s) => s + eval_loop(e, k + 1, sigma).as_str(),
         None => "".to_string(),
     }
 }
 
-fn find_all_matches(r: &RegularExpr, s: &str) -> impl Iterator<Item = (isize, isize)> {
-    if r.contains(&Token::Special(Special::Start)) {
-        let mut r = r.clone();
-        r.0.remove(0);
-        if r.is_empty() {
-            return vec![(0, -1)].into_iter();
-        }
-        unimplemented!("not only single startTok")
-    } else if r.contains(&Token::Special(Special::End)) {
-        let mut r = r.clone();
-        r.0.remove(r.0.len() - 1);
-        if r.is_empty() {
-            return vec![(s.len() as isize, s.len() as isize - 1)].into_iter();
-        }
-        unimplemented!("not only single endTok");
-    } else {
-        if r.is_empty() {
-            // return all possible range
-            return (0..(s.len() + 1) as isize)
-                .zip(-1..s.len() as isize)
-                .collect::<Vec<_>>()
-                .into_iter();
-        }
-        let mut v = vec![];
-        let mut start = 0;
-        'outer: while start < s.len() {
-            for end in (start..s.len()).rev() {
-                if eval_regular(r, &s[start..=end]) {
-                    v.push((start as isize, end as isize));
-                    start = end + 1;
-                    continue 'outer;
-                }
-            }
-            start += 1;
-        }
-        v.into_iter()
-    }
-}
-
-pub fn eval_position(p: &Position, s: &str) -> Option<usize> {
+fn eval_position(p: &Position, s: &str) -> Option<usize> {
     match p {
         Position::CPos(k) => {
             if *k >= 0 {
@@ -211,8 +205,8 @@ pub fn eval_position(p: &Position, s: &str) -> Option<usize> {
             let mut matched_t = vec![];
             // t1 <= t3 or t3 = t1 - 1()
             // t  <= t2 or t2 = t - 1()
-            for (_t1, t3) in find_all_matches(r1, s) {
-                for (t, _t2) in find_all_matches(r2, s) {
+            for (_t1, t3) in r1.find_all_matches(s) {
+                for (t, _t2) in r2.find_all_matches(s) {
                     println!("[{_t1}, {t3}], [{t}, {_t2}]");
                     if t3 == t - 1 {
                         matched_t.push(t as usize);
@@ -227,6 +221,47 @@ pub fn eval_position(p: &Position, s: &str) -> Option<usize> {
                 }
                 std::cmp::Ordering::Greater => matched_t.get((k - 1) as usize).copied(),
             }
+        }
+    }
+}
+
+impl RegularExpr {
+    fn find_all_matches(&self, s: &str) -> impl Iterator<Item = (isize, isize)> {
+        if self.0.contains(&Token::Special(Special::Start)) {
+            let mut r = self.clone();
+            r.0.remove(0);
+            if r.0.is_empty() {
+                return vec![(0, -1)].into_iter();
+            }
+            unimplemented!("not only single startTok")
+        } else if self.0.contains(&Token::Special(Special::End)) {
+            let mut r = self.clone();
+            r.0.remove(r.0.len() - 1);
+            if r.0.is_empty() {
+                return vec![(s.len() as isize, s.len() as isize - 1)].into_iter();
+            }
+            unimplemented!("not only single endTok");
+        } else {
+            if self.0.is_empty() {
+                // return all possible range
+                return (0..(s.len() + 1) as isize)
+                    .zip(-1..s.len() as isize)
+                    .collect::<Vec<_>>()
+                    .into_iter();
+            }
+            let mut v = vec![];
+            let mut start = 0;
+            'outer: while start < s.len() {
+                for end in (start..s.len()).rev() {
+                    if self.eval(&s[start..=end]) {
+                        v.push((start as isize, end as isize));
+                        start = end + 1;
+                        continue 'outer;
+                    }
+                }
+                start += 1;
+            }
+            v.into_iter()
         }
     }
 }
@@ -261,6 +296,13 @@ impl Index<FreeString> for InputState {
     }
 }
 
+impl std::ops::Deref for InputState {
+    type Target = Vec<String>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
 /// Test cases below are taken from the paper examples
 #[cfg(test)]
 mod tests {
@@ -275,19 +317,6 @@ mod tests {
             .collect();
         let expected = example[example.len() - 1].to_string();
         (InputState(input), expected)
-    }
-
-    #[test]
-    fn test_regular() {
-        let regular = RegularExpr::empty();
-        assert!(eval_regular(&regular, ""));
-        let regular = RegularExpr(vec![Token::OneOrMore(TokenClass::NumTok)]);
-        assert!(eval_regular(&regular, "1"));
-        assert!(eval_regular(&regular, "123"));
-        assert!(!eval_regular(&regular, "123a"));
-        let regular = RegularExpr(vec![Token::Special('/'.into())]);
-        assert!(eval_regular(&regular, "/"));
-        assert!(!eval_regular(&regular, "1/123"));
     }
 
     /// Example 2: extract the quantity of the purchase
@@ -305,7 +334,7 @@ mod tests {
         };
         for s in EXAMPLE2.iter() {
             let (sigma, expected) = split(s);
-            assert_eq!(eval_atomic(&p2, &sigma), Some(expected));
+            assert_eq!(p2.eval(&sigma), Some(expected));
         }
     }
 
@@ -323,7 +352,7 @@ mod tests {
         };
         for s in EXAMPLE3.iter() {
             let (sigma, expected) = split(s);
-            assert_eq!(eval_atomic(&p3, &sigma), Some(expected));
+            assert_eq!(p3.eval(&sigma), Some(expected));
         }
     }
 
@@ -340,7 +369,7 @@ mod tests {
         };
         for s in EXAMPLE4.iter() {
             let (sigma, expected) = split(s);
-            assert_eq!(eval_atomic(&p4, &sigma), Some(expected));
+            assert_eq!(p4.eval(&sigma), Some(expected));
         }
     }
 
@@ -349,19 +378,17 @@ mod tests {
     fn test5() {
         let pos1 = Position::Pos {
             r1: Token::Special('('.into()).into(),
-            r2: vec![
+            r2: RegularExpr(vec![
                 Token::OneOrMore(TokenClass::NumTok),
                 Token::Special('/'.into()),
-            ]
-            .into(),
+            ]),
             c: IntegerExpr::Bound,
         };
         let pos2 = Position::Pos {
-            r1: vec![
+            r1: RegularExpr(vec![
                 Token::Special('/'.into()),
                 Token::OneOrMore(TokenClass::NumTok),
-            ]
-            .into(),
+            ]),
             r2: Token::Special(')'.into()).into(),
             c: IntegerExpr::Bound,
         };
@@ -374,11 +401,10 @@ mod tests {
                 },
                 AtomicExpr::ConstStr("# ".to_string()),
             ]),
-        }
-        .into();
+        };
         for s in EXAMPLE5.iter() {
             let (sigma, expected) = split(s);
-            assert_eq!(eval_trace(&p5, &sigma), Some(expected));
+            assert_eq!(p5.eval(&sigma), Some(expected));
         }
     }
 
@@ -392,14 +418,13 @@ mod tests {
         };
         let pos2 = Position::Pos {
             r1: Token::ExcludeOneOrMore(TokenClass::WhileSpaceTok).into(),
-            r2: vec![
+            r2: RegularExpr(vec![
                 Token::OneOrMore(TokenClass::WhileSpaceTok),
                 Token::ExcludeOneOrMore(TokenClass::WhileSpaceTok),
-            ]
-            .into(),
+            ]),
             c: IntegerExpr::Bound,
         };
-        let p6 = vec![
+        let p6 = TraceExpr(vec![
             AtomicExpr::Loop {
                 e: TraceExpr(vec![
                     AtomicExpr::SubStr {
@@ -415,11 +440,10 @@ mod tests {
                 Token::ExcludeOneOrMore(TokenClass::WhileSpaceTok).into(),
                 IntegerExpr::Constant(-1),
             ),
-        ]
-        .into();
+        ]);
         for s in EXAMPLE6.iter() {
             let (sigma, expected) = split(s);
-            assert_eq!(eval_trace(&p6, &sigma), Some(expected));
+            assert_eq!(p6.eval(&sigma), Some(expected));
         }
     }
 
@@ -439,7 +463,7 @@ mod tests {
             )),
         ])
         .into();
-        let e1 = vec![
+        let e1 = TraceExpr(vec![
             AtomicExpr::SubStr {
                 v: 0,
                 p1: Position::CPos(0),
@@ -452,8 +476,7 @@ mod tests {
                 p2: Position::CPos(-1),
             },
             AtomicExpr::ConstStr(")".to_string()),
-        ]
-        .into();
+        ]);
         let b2 = Bool(vec![
             Conjunct(vec![Predicate::Is(Match::new(
                 0,
@@ -466,10 +489,13 @@ mod tests {
                 1,
             ))]),
         ]);
-        let p7 = vec![(b1, e1), (b2, AtomicExpr::ConstStr("".to_string()).into())].into();
+        let p7 = StringExpr(vec![
+            (b1, e1),
+            (b2, AtomicExpr::ConstStr("".to_string()).into()),
+        ]);
         for s in EXAMPLE7.iter() {
             let (sigma, expected) = split(s);
-            assert_eq!(eval(&p7, &sigma), Some(expected));
+            assert_eq!(p7.eval(&sigma), Some(expected));
         }
     }
 
@@ -533,10 +559,10 @@ mod tests {
                 c: IntegerExpr::Constant(1),
             },
         };
-        let p8 = vec![(b1, e1.into()), (b2, e2.into()), (b3, e3.into())].into();
+        let p8 = StringExpr(vec![(b1, e1.into()), (b2, e2.into()), (b3, e3.into())]);
         for s in EXAMPLE8.iter() {
             let (sigma, expected) = split(s);
-            assert_eq!(eval(&p8, &sigma), Some(expected));
+            assert_eq!(p8.eval(&sigma), Some(expected));
         }
     }
 
@@ -545,30 +571,27 @@ mod tests {
     fn test9() {
         let p1 = Position::Pos {
             r1: RegularExpr::empty(),
-            r2: vec![
+            r2: RegularExpr(vec![
                 Token::OneOrMore(TokenClass::AlphaTok),
                 Token::Special(Special::Not('.')),
-            ]
-            .into(),
+            ]),
             c: IntegerExpr::Constant(1),
         };
         let p2 = Position::Pos {
             r1: RegularExpr::empty(),
-            r2: vec![
+            r2: RegularExpr(vec![
                 Token::OneOrMore(TokenClass::LowerTok),
                 Token::Special(Special::Not('.')),
-            ]
-            .into(),
+            ]),
             c: IntegerExpr::Constant(1),
         };
         let last_name = AtomicExpr::SubStr { v: 0, p1, p2 };
         let p1 = Position::Pos {
             r1: RegularExpr::empty(),
-            r2: vec![
+            r2: RegularExpr(vec![
                 Token::OneOrMore(TokenClass::AlphaTok),
                 Token::Special(Special::Is(',')),
-            ]
-            .into(),
+            ]),
             c: IntegerExpr::Constant(1),
         };
         let p2 = Position::Pos {
@@ -582,14 +605,13 @@ mod tests {
             1,
         ))])
         .into();
-        let e1 = vec![
+        let e1 = TraceExpr(vec![
             AtomicExpr::SubStr { v: 0, p1, p2 },
             AtomicExpr::ConstStr(", ".to_string()),
             last_name.clone(),
             AtomicExpr::ConstStr(".".to_string()),
-        ]
-        .into();
-        let e2 = vec![
+        ]);
+        let e2 = TraceExpr(vec![
             sub_str2(
                 0,
                 Token::OneOrMore(TokenClass::AlphaTok).into(),
@@ -598,18 +620,17 @@ mod tests {
             AtomicExpr::ConstStr(", ".to_string()),
             last_name.clone(),
             AtomicExpr::ConstStr(".".to_string()),
-        ]
-        .into();
+        ]);
         let b2: Bool = Conjunct(vec![Predicate::Not(Match::new(
             0,
             Token::Special(','.into()).into(),
             1,
         ))])
         .into();
-        let p13 = vec![(b1, e1), (b2, e2)].into();
+        let p13 = StringExpr(vec![(b1, e1), (b2, e2)]);
         for s in EXAMPLE9.iter() {
             let (sigma, expected) = split(s);
-            assert_eq!(eval(&p13, &sigma), Some(expected));
+            assert_eq!(p13.eval(&sigma), Some(expected));
         }
     }
 
@@ -622,7 +643,7 @@ mod tests {
             3,
         ))])
         .into();
-        let e1 = vec![
+        let e1 = TraceExpr(vec![
             sub_str2(
                 0,
                 Token::OneOrMore(TokenClass::NumTok).into(),
@@ -640,15 +661,14 @@ mod tests {
                 Token::OneOrMore(TokenClass::NumTok).into(),
                 IntegerExpr::Constant(3),
             ),
-        ]
-        .into();
+        ]);
         let b2: Bool = Conjunct(vec![Predicate::Not(Match::new(
             0,
             Token::OneOrMore(TokenClass::NumTok).into(),
             3,
         ))])
         .into();
-        let e2 = vec![
+        let e2 = TraceExpr(vec![
             AtomicExpr::ConstStr("425-".to_string()),
             sub_str2(
                 0,
@@ -661,19 +681,18 @@ mod tests {
                 Token::OneOrMore(TokenClass::NumTok).into(),
                 IntegerExpr::Constant(2),
             ),
-        ]
-        .into();
-        let p10 = vec![(b1, e1), (b2, e2)].into();
+        ]);
+        let p10 = StringExpr(vec![(b1, e1), (b2, e2)]);
         for s in EXAMPLE10.iter() {
             let (sigma, expected) = split(s);
-            assert_eq!(eval(&p10, &sigma), Some(expected));
+            assert_eq!(p10.eval(&sigma), Some(expected));
         }
     }
 
     /// Example 12: Synthesis of part of a futre extension of itself
     #[test]
     fn test12() {
-        let p12 = vec![
+        let p12 = TraceExpr(vec![
             AtomicExpr::ConstStr("case ".to_string()),
             AtomicExpr::SubStr {
                 v: 1,
@@ -687,11 +706,10 @@ mod tests {
                 p2: Position::CPos(-1),
             },
             AtomicExpr::ConstStr("\";".to_string()),
-        ]
-        .into();
+        ]);
         for s in EXAMPLE12.iter() {
             let (sigma, expected) = split(s);
-            assert_eq!(eval_trace(&p12, &sigma), Some(expected));
+            assert_eq!(p12.eval(&sigma), Some(expected));
         }
     }
 
@@ -704,22 +722,24 @@ mod tests {
             6,
         ))])
         .into();
-        let e1 = vec![AtomicExpr::SubStr {
+        let e1 = TraceExpr(vec![AtomicExpr::SubStr {
             v: 1,
             p1: Position::CPos(0),
             p2: Position::CPos(-1),
-        }]
-        .into();
+        }]);
         let b2: Bool = Conjunct(vec![Predicate::Not(Match::new(
             0,
             Token::Special('/'.into()).into(),
             6,
         ))])
         .into();
-        let p13 = vec![(b1, e1), (b2, AtomicExpr::ConstStr("0".to_string()).into())].into();
+        let p13 = StringExpr(vec![
+            (b1, e1),
+            (b2, AtomicExpr::ConstStr("0".to_string()).into()),
+        ]);
         for s in EXAMPLE13.iter() {
             let (sigma, expected) = split(s);
-            assert_eq!(eval(&p13, &sigma), Some(expected));
+            assert_eq!(p13.eval(&sigma), Some(expected));
         }
     }
 
@@ -733,14 +753,13 @@ mod tests {
         };
         let pos2 = Position::Pos {
             r1: Token::OneOrMore(TokenClass::NumTok).into(),
-            r2: vec![
+            r2: RegularExpr(vec![
                 Token::ExcludeOneOrMore(TokenClass::NumTok),
                 Token::OneOrMore(TokenClass::NumTok),
-            ]
-            .into(),
+            ]),
             c: IntegerExpr::Bound,
         };
-        let p14 = vec![
+        let p14 = TraceExpr(vec![
             AtomicExpr::Loop {
                 e: TraceExpr(vec![
                     AtomicExpr::SubStr {
@@ -756,12 +775,11 @@ mod tests {
                 Token::OneOrMore(TokenClass::NumTok).into(),
                 IntegerExpr::Constant(-1),
             ),
-        ]
-        .into();
+        ]);
         println!("{}", p14);
         for s in EXAMPLE14.iter() {
             let (sigma, expected) = split(s);
-            assert_eq!(eval_trace(&p14, &sigma), Some(expected));
+            assert_eq!(p14.eval(&sigma), Some(expected));
         }
     }
 }

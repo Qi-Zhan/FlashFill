@@ -3,13 +3,10 @@
 //! Corresponds to the Figure 1 of the paper
 
 use std::fmt::{self, Display, Formatter};
-use std::ops::{Deref, Index};
 
 /// String expr P := Switch((b1, e1), ..., (bn, en))
 #[derive(Debug, Clone)]
-pub struct StringExpr {
-    pub switches: Vec<(Bool, TraceExpr)>,
-}
+pub struct StringExpr(pub Vec<(Bool, TraceExpr)>);
 
 /// Bool expr b := d1 & ... & dn
 #[derive(Debug, Clone)]
@@ -64,7 +61,7 @@ pub fn sub_str2(v: FreeString, r: RegularExpr, c: IntegerExpr) -> AtomicExpr {
         p1: Position::Pos {
             r1: RegularExpr::empty(),
             r2: r.clone(),
-            c: c.clone(),
+            c,
         },
         p2: Position::Pos {
             r1: r,
@@ -86,7 +83,7 @@ pub enum Position {
     },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum IntegerExpr {
     Constant(i32),
     /// simple bound now
@@ -96,14 +93,14 @@ pub enum IntegerExpr {
 #[derive(Debug, Clone)]
 pub struct RegularExpr(pub Vec<Token>);
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Token {
     Special(Special),
     OneOrMore(TokenClass),
     ExcludeOneOrMore(TokenClass),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Special {
     Is(char),
     Not(char),
@@ -114,7 +111,7 @@ pub enum Special {
 /// classical token class
 ///
 /// e.g. NumTok, AlphaTok
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TokenClass {
     NumTok,
     AlphaTok,
@@ -137,121 +134,15 @@ impl Match {
     }
 }
 
-impl Index<usize> for StringExpr {
-    type Output = (Bool, TraceExpr);
-    fn index(&self, i: usize) -> &(Bool, TraceExpr) {
-        &self.switches[i]
-    }
-}
-
-impl Index<usize> for Bool {
-    type Output = Conjunct;
-    fn index(&self, i: usize) -> &Conjunct {
-        &self.0[i]
-    }
-}
-
-impl Index<usize> for Conjunct {
-    type Output = Predicate;
-    fn index(&self, i: usize) -> &Predicate {
-        &self.0[i]
-    }
-}
-
-impl Index<usize> for TraceExpr {
-    type Output = AtomicExpr;
-    fn index(&self, i: usize) -> &AtomicExpr {
-        &self.0[i]
-    }
-}
-
-impl Index<usize> for RegularExpr {
-    type Output = Token;
-    fn index(&self, i: usize) -> &Token {
-        &self.0[i]
-    }
-}
-
-impl Deref for StringExpr {
-    type Target = Vec<(Bool, TraceExpr)>;
-    fn deref(&self) -> &Self::Target {
-        &self.switches
-    }
-}
-
-impl Deref for Bool {
-    type Target = Vec<Conjunct>;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl Deref for Conjunct {
-    type Target = Vec<Predicate>;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl Deref for TraceExpr {
-    type Target = Vec<AtomicExpr>;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl Deref for RegularExpr {
-    type Target = Vec<Token>;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl From<Vec<(Bool, TraceExpr)>> for StringExpr {
-    fn from(sw: Vec<(Bool, TraceExpr)>) -> Self {
-        StringExpr { switches: sw }
-    }
-}
-
-impl From<Vec<Conjunct>> for Bool {
-    fn from(cs: Vec<Conjunct>) -> Self {
-        Bool(cs)
-    }
-}
-
 impl From<Conjunct> for Bool {
     fn from(conj: Conjunct) -> Self {
         Bool(vec![conj])
     }
 }
 
-impl From<Vec<Predicate>> for Conjunct {
-    fn from(ps: Vec<Predicate>) -> Self {
-        Self(ps)
-    }
-}
-
-impl From<Predicate> for Conjunct {
-    fn from(ps: Predicate) -> Self {
-        Self(vec![ps])
-    }
-}
-
 impl From<AtomicExpr> for TraceExpr {
     fn from(value: AtomicExpr) -> Self {
         Self(vec![value])
-    }
-}
-
-impl From<Vec<AtomicExpr>> for TraceExpr {
-    fn from(fs: Vec<AtomicExpr>) -> Self {
-        TraceExpr(fs)
-    }
-}
-
-impl From<Vec<Token>> for RegularExpr {
-    fn from(ts: Vec<Token>) -> Self {
-        Self(ts)
     }
 }
 
@@ -270,9 +161,9 @@ impl From<char> for Special {
 impl Display for StringExpr {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         write!(f, "Switch(")?;
-        for (i, (b, e)) in self.switches.iter().enumerate() {
+        for (i, (b, e)) in self.0.iter().enumerate() {
             write!(f, "({}, {})", b, e)?;
-            if i != self.switches.len() - 1 {
+            if i != self.0.len() - 1 {
                 write!(f, ", ")?;
             }
         }
@@ -364,7 +255,7 @@ impl Display for IntegerExpr {
 
 impl Display for RegularExpr {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        if self.is_empty() {
+        if self.0.is_empty() {
             write!(f, "e")?;
         }
         for (i, t) in self.0.iter().enumerate() {
