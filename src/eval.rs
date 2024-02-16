@@ -2,20 +2,13 @@
 //!
 //! Corresponds to the Figure 2 of the paper
 
-use std::{ops::Index, usize};
-
 use crate::language::*;
+use crate::util::InputState;
 
-/// holds values for m string variables v1, ..., vm
-///
-/// denoting the multiple input columns in a spreadsheet
-#[derive(Debug)]
-pub struct InputState(Vec<String>);
-
-pub trait Eval {
-    fn eval(&self, sigma: &InputState) -> Option<String>;
+pub trait Eval<T = String> {
+    fn eval(&self, sigma: &InputState) -> Option<T>;
 }
-pub trait EvalBool<T> {
+pub trait EvalBool<T = InputState> {
     fn eval(&self, sigma: T) -> bool;
 }
 
@@ -128,8 +121,8 @@ impl Eval for AtomicExpr {
     fn eval(&self, sigma: &InputState) -> Option<String> {
         match self {
             AtomicExpr::SubStr { v, p1, p2 } => {
-                let p1 = eval_position(p1, &sigma[*v])?;
-                let p2 = eval_position(p2, &sigma[*v])?;
+                let p1 = eval(p1, &sigma[*v])?;
+                let p2 = eval(p2, &sigma[*v])?;
                 // Paper use [p1..p2] and [p1..=p2] mix!
                 Some(sigma[*v][p1..p2].to_string())
             }
@@ -186,7 +179,7 @@ fn eval_loop(e: &TraceExpr, k: usize, sigma: &InputState) -> String {
     }
 }
 
-fn eval_position(p: &Position, s: &str) -> Option<usize> {
+fn eval(p: &Position, s: &str) -> Option<usize> {
     match p {
         Position::CPos(k) => {
             if *k >= 0 {
@@ -269,11 +262,11 @@ impl RegularExpr {
 impl TokenClass {
     fn matched(&self, c: &char) -> bool {
         match self {
-            TokenClass::NumTok => '0' <= *c && *c <= '9',
-            TokenClass::AlphaTok => c.is_alphabetic(),
-            TokenClass::UpperTok => c.is_ascii_uppercase(),
-            TokenClass::LowerTok => c.is_ascii_lowercase(),
-            TokenClass::WhileSpaceTok => c.is_whitespace(),
+            TokenClass::Num => '0' <= *c && *c <= '9',
+            TokenClass::Alpha => c.is_alphabetic(),
+            TokenClass::Upper => c.is_ascii_uppercase(),
+            TokenClass::Lower => c.is_ascii_lowercase(),
+            TokenClass::WhileSpace => c.is_whitespace(),
         }
     }
 }
@@ -289,34 +282,27 @@ impl Special {
     }
 }
 
-impl Index<FreeString> for InputState {
-    type Output = String;
-    fn index(&self, v: FreeString) -> &String {
-        &self.0[v]
-    }
-}
-
-impl std::ops::Deref for InputState {
-    type Target = Vec<String>;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
 /// Test cases below are taken from the paper examples
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::examples::*;
+    use crate::util::split;
 
-    fn split(example: &[&str]) -> (InputState, String) {
-        let input = example
-            .iter()
-            .take(example.len() - 1)
-            .map(|s| s.to_string())
-            .collect();
-        let expected = example[example.len() - 1].to_string();
-        (InputState(input), expected)
+    fn sub_str2(v: FreeString, r: RegularExpr, c: IntegerExpr) -> AtomicExpr {
+        AtomicExpr::SubStr {
+            v,
+            p1: Position::Pos {
+                r1: RegularExpr::empty(),
+                r2: r.clone(),
+                c,
+            },
+            p2: Position::Pos {
+                r1: r,
+                r2: RegularExpr::empty(),
+                c,
+            },
+        }
     }
 
     /// Example 2: extract the quantity of the purchase
@@ -327,7 +313,7 @@ mod tests {
             p1: Position::Pos {
                 // match epsilon, empty string
                 r1: RegularExpr::empty(),
-                r2: Token::OneOrMore(TokenClass::NumTok).into(),
+                r2: Token::OneOrMore(TokenClass::Num).into(),
                 c: IntegerExpr::Constant(1),
             },
             p2: Position::CPos(-1),
@@ -362,7 +348,7 @@ mod tests {
         let p4 = AtomicExpr::Loop {
             e: sub_str2(
                 0,
-                Token::OneOrMore(TokenClass::UpperTok).into(),
+                Token::OneOrMore(TokenClass::Upper).into(),
                 IntegerExpr::Bound,
             )
             .into(),
@@ -379,7 +365,7 @@ mod tests {
         let pos1 = Position::Pos {
             r1: Token::Special('('.into()).into(),
             r2: RegularExpr(vec![
-                Token::OneOrMore(TokenClass::NumTok),
+                Token::OneOrMore(TokenClass::Num),
                 Token::Special('/'.into()),
             ]),
             c: IntegerExpr::Bound,
@@ -387,7 +373,7 @@ mod tests {
         let pos2 = Position::Pos {
             r1: RegularExpr(vec![
                 Token::Special('/'.into()),
-                Token::OneOrMore(TokenClass::NumTok),
+                Token::OneOrMore(TokenClass::Num),
             ]),
             r2: Token::Special(')'.into()).into(),
             c: IntegerExpr::Bound,
@@ -413,14 +399,14 @@ mod tests {
     fn test6() {
         let pos1 = Position::Pos {
             r1: RegularExpr::empty(),
-            r2: Token::ExcludeOneOrMore(TokenClass::WhileSpaceTok).into(),
+            r2: Token::ExcludeOneOrMore(TokenClass::WhileSpace).into(),
             c: IntegerExpr::Bound,
         };
         let pos2 = Position::Pos {
-            r1: Token::ExcludeOneOrMore(TokenClass::WhileSpaceTok).into(),
+            r1: Token::ExcludeOneOrMore(TokenClass::WhileSpace).into(),
             r2: RegularExpr(vec![
-                Token::OneOrMore(TokenClass::WhileSpaceTok),
-                Token::ExcludeOneOrMore(TokenClass::WhileSpaceTok),
+                Token::OneOrMore(TokenClass::WhileSpace),
+                Token::ExcludeOneOrMore(TokenClass::WhileSpace),
             ]),
             c: IntegerExpr::Bound,
         };
@@ -437,7 +423,7 @@ mod tests {
             },
             sub_str2(
                 0,
-                Token::ExcludeOneOrMore(TokenClass::WhileSpaceTok).into(),
+                Token::ExcludeOneOrMore(TokenClass::WhileSpace).into(),
                 IntegerExpr::Constant(-1),
             ),
         ]);
@@ -451,16 +437,8 @@ mod tests {
     #[test]
     fn test7() {
         let b1: Bool = Conjunct(vec![
-            Predicate::Is(Match::new(
-                0,
-                Token::OneOrMore(TokenClass::AlphaTok).into(),
-                1,
-            )),
-            Predicate::Is(Match::new(
-                1,
-                Token::OneOrMore(TokenClass::AlphaTok).into(),
-                1,
-            )),
+            Predicate::Is(Match::new(0, Token::OneOrMore(TokenClass::Alpha).into(), 1)),
+            Predicate::Is(Match::new(1, Token::OneOrMore(TokenClass::Alpha).into(), 1)),
         ])
         .into();
         let e1 = TraceExpr(vec![
@@ -480,12 +458,12 @@ mod tests {
         let b2 = Bool(vec![
             Conjunct(vec![Predicate::Is(Match::new(
                 0,
-                Token::OneOrMore(TokenClass::AlphaTok).into(),
+                Token::OneOrMore(TokenClass::Alpha).into(),
                 1,
             ))]),
             Conjunct(vec![Predicate::Is(Match::new(
                 1,
-                Token::OneOrMore(TokenClass::AlphaTok).into(),
+                Token::OneOrMore(TokenClass::Alpha).into(),
                 1,
             ))]),
         ]);
@@ -572,7 +550,7 @@ mod tests {
         let p1 = Position::Pos {
             r1: RegularExpr::empty(),
             r2: RegularExpr(vec![
-                Token::OneOrMore(TokenClass::AlphaTok),
+                Token::OneOrMore(TokenClass::Alpha),
                 Token::Special(Special::Not('.')),
             ]),
             c: IntegerExpr::Constant(1),
@@ -580,7 +558,7 @@ mod tests {
         let p2 = Position::Pos {
             r1: RegularExpr::empty(),
             r2: RegularExpr(vec![
-                Token::OneOrMore(TokenClass::LowerTok),
+                Token::OneOrMore(TokenClass::Lower),
                 Token::Special(Special::Not('.')),
             ]),
             c: IntegerExpr::Constant(1),
@@ -589,13 +567,13 @@ mod tests {
         let p1 = Position::Pos {
             r1: RegularExpr::empty(),
             r2: RegularExpr(vec![
-                Token::OneOrMore(TokenClass::AlphaTok),
+                Token::OneOrMore(TokenClass::Alpha),
                 Token::Special(Special::Is(',')),
             ]),
             c: IntegerExpr::Constant(1),
         };
         let p2 = Position::Pos {
-            r1: Token::OneOrMore(TokenClass::AlphaTok).into(),
+            r1: Token::OneOrMore(TokenClass::Alpha).into(),
             r2: Token::Special(Special::Is(',')).into(),
             c: IntegerExpr::Constant(1),
         };
@@ -614,7 +592,7 @@ mod tests {
         let e2 = TraceExpr(vec![
             sub_str2(
                 0,
-                Token::OneOrMore(TokenClass::AlphaTok).into(),
+                Token::OneOrMore(TokenClass::Alpha).into(),
                 IntegerExpr::Constant(-1),
             ),
             AtomicExpr::ConstStr(", ".to_string()),
@@ -639,32 +617,32 @@ mod tests {
     fn test10() {
         let b1: Bool = Conjunct(vec![Predicate::Is(Match::new(
             0,
-            Token::OneOrMore(TokenClass::NumTok).into(),
+            Token::OneOrMore(TokenClass::Num).into(),
             3,
         ))])
         .into();
         let e1 = TraceExpr(vec![
             sub_str2(
                 0,
-                Token::OneOrMore(TokenClass::NumTok).into(),
+                Token::OneOrMore(TokenClass::Num).into(),
                 IntegerExpr::Constant(1),
             ),
             AtomicExpr::ConstStr("-".to_string()),
             sub_str2(
                 0,
-                Token::OneOrMore(TokenClass::NumTok).into(),
+                Token::OneOrMore(TokenClass::Num).into(),
                 IntegerExpr::Constant(2),
             ),
             AtomicExpr::ConstStr("-".to_string()),
             sub_str2(
                 0,
-                Token::OneOrMore(TokenClass::NumTok).into(),
+                Token::OneOrMore(TokenClass::Num).into(),
                 IntegerExpr::Constant(3),
             ),
         ]);
         let b2: Bool = Conjunct(vec![Predicate::Not(Match::new(
             0,
-            Token::OneOrMore(TokenClass::NumTok).into(),
+            Token::OneOrMore(TokenClass::Num).into(),
             3,
         ))])
         .into();
@@ -672,13 +650,13 @@ mod tests {
             AtomicExpr::ConstStr("425-".to_string()),
             sub_str2(
                 0,
-                Token::OneOrMore(TokenClass::NumTok).into(),
+                Token::OneOrMore(TokenClass::Num).into(),
                 IntegerExpr::Constant(1),
             ),
             AtomicExpr::ConstStr("-".to_string()),
             sub_str2(
                 0,
-                Token::OneOrMore(TokenClass::NumTok).into(),
+                Token::OneOrMore(TokenClass::Num).into(),
                 IntegerExpr::Constant(2),
             ),
         ]);
@@ -748,14 +726,14 @@ mod tests {
     fn test14() {
         let pos1 = Position::Pos {
             r1: RegularExpr::empty(),
-            r2: Token::OneOrMore(TokenClass::NumTok).into(),
+            r2: Token::OneOrMore(TokenClass::Num).into(),
             c: IntegerExpr::Bound,
         };
         let pos2 = Position::Pos {
-            r1: Token::OneOrMore(TokenClass::NumTok).into(),
+            r1: Token::OneOrMore(TokenClass::Num).into(),
             r2: RegularExpr(vec![
-                Token::ExcludeOneOrMore(TokenClass::NumTok),
-                Token::OneOrMore(TokenClass::NumTok),
+                Token::ExcludeOneOrMore(TokenClass::Num),
+                Token::OneOrMore(TokenClass::Num),
             ]),
             c: IntegerExpr::Bound,
         };
@@ -772,7 +750,7 @@ mod tests {
             },
             sub_str2(
                 0,
-                Token::OneOrMore(TokenClass::NumTok).into(),
+                Token::OneOrMore(TokenClass::Num).into(),
                 IntegerExpr::Constant(-1),
             ),
         ]);

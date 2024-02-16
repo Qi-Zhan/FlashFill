@@ -55,22 +55,6 @@ pub enum AtomicExpr {
     },
 }
 
-pub fn sub_str2(v: FreeString, r: RegularExpr, c: IntegerExpr) -> AtomicExpr {
-    AtomicExpr::SubStr {
-        v,
-        p1: Position::Pos {
-            r1: RegularExpr::empty(),
-            r2: r.clone(),
-            c,
-        },
-        p2: Position::Pos {
-            r1: r,
-            r2: RegularExpr::empty(),
-            c,
-        },
-    }
-}
-
 #[derive(Debug, Clone)]
 pub enum Position {
     /// CPos(k) is the k-th character of the string
@@ -113,11 +97,11 @@ pub enum Special {
 /// e.g. NumTok, AlphaTok
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TokenClass {
-    NumTok,
-    AlphaTok,
-    UpperTok,
-    LowerTok,
-    WhileSpaceTok,
+    Num,
+    Alpha,
+    Upper,
+    Lower,
+    WhileSpace,
 }
 
 pub type FreeString = usize;
@@ -292,11 +276,11 @@ impl Display for Special {
 impl Display for TokenClass {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self {
-            TokenClass::NumTok => write!(f, "NumTok"),
-            TokenClass::AlphaTok => write!(f, "AlphaTok"),
-            TokenClass::UpperTok => write!(f, "UpperTok"),
-            TokenClass::LowerTok => write!(f, "LowerTok"),
-            TokenClass::WhileSpaceTok => write!(f, "NonSpaceTok"),
+            TokenClass::Num => write!(f, "NumTok"),
+            TokenClass::Alpha => write!(f, "AlphaTok"),
+            TokenClass::Upper => write!(f, "UpperTok"),
+            TokenClass::Lower => write!(f, "LowerTok"),
+            TokenClass::WhileSpace => write!(f, "NonSpaceTok"),
         }
     }
 }
