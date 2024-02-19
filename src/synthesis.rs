@@ -85,16 +85,45 @@ fn generate_partitions(t: Vec<(InputState, Dag)>) -> Vec<(Vec<InputState>, Dag)>
     t
 }
 
-fn choose_predicate() -> Predicate {
-    todo!()
+fn all_predicates(len: usize) -> Vec<Predicate> {
+    let times = 1..=3;
+    let range = 0..len;
+    ALLTOKENSEQS
+        .iter()
+        .cartesian_product(range)
+        .cartesian_product(times)
+        .flat_map(|((r, v), k)| {
+            if r.0.is_empty() {
+                vec![]
+            } else {
+                vec![
+                    Predicate::Is(Match::new(v, r.clone(), k)),
+                    Predicate::Not(Match::new(v, r.clone(), k)),
+                ]
+            }
+        })
+        .collect_vec()
+}
+
+fn choose_predicate(
+    all_predicates: &[Predicate],
+    sigma1: &HashSet<&InputState>,
+    sigma2: &HashSet<&InputState>,
+) -> Predicate {
+    all_predicates
+        .iter()
+        .max_by_key(|p| csp(p, sigma1, sigma2))
+        .unwrap()
+        .clone()
 }
 
 /// Definition 5: Classfication Score of a Predicate
-fn csp(p: &Predicate, sigma1: &[Vec<String>], sigma2: &[Vec<String>]) -> usize {
+fn csp(p: &Predicate, sigma1: &HashSet<&InputState>, sigma2: &HashSet<&InputState>) -> usize {
     sigma1.iter().filter(|s| p.eval(s)).count() * sigma2.iter().filter(|s| !p.eval(s)).count()
 }
 
 fn generate_bool_classifier(sigma1: &[Vec<String>], sigma2: &HashSet<&Vec<InputState>>) -> Bool {
+    let all_matches = all_predicates(sigma1[0].len());
     let mut s1_prime: HashSet<_> = sigma1.iter().collect();
     let mut b = vec![];
     while !s1_prime.is_empty() {
@@ -104,7 +133,7 @@ fn generate_bool_classifier(sigma1: &[Vec<String>], sigma2: &HashSet<&Vec<InputS
         let mut d = vec![];
         while !s2_prime.is_empty() {
             let old2 = s2_prime.clone();
-            let p = choose_predicate();
+            let p = choose_predicate(&all_matches, &s1_prime_prime, &s2_prime);
             // only keep sat
             s1_prime_prime.retain(|input| p.eval(input));
             s2_prime.retain(|input| p.eval(input));

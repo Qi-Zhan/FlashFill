@@ -128,12 +128,17 @@ impl IntersectSize for Dag {
                 }
             }
         }
-        Some(Dag {
+        let dag = Dag {
             nodes,
             source,
             target,
             w,
-        })
+        };
+        // We cannot tell the intersection is valid if there exist no valid path from src to target
+        if !dag.exists_path() {
+            return None;
+        }
+        Some(dag)
     }
 
     fn size(&self) -> usize {
@@ -426,6 +431,25 @@ impl Dag {
         } else {
             Some(paths.concat())
         }
+    }
+
+    fn exists_path(&self) -> bool {
+        let edges = self.w.keys().collect_vec();
+        let mut visited = HashSet::new();
+        let mut queue = vec![self.target];
+        while let Some(item) = queue.pop() {
+            if item == 0 {
+                return true;
+            }
+            if visited.insert(item) {
+                for (i, j) in &edges {
+                    if *j == item {
+                        queue.push(*i);
+                    }
+                }
+            }
+        }
+        false
     }
 
     /// Definition 3: compatible

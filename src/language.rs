@@ -184,14 +184,15 @@ impl From<char> for Special {
 
 impl Display for StringExpr {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        write!(f, "Switch(")?;
-        for (i, (b, e)) in self.0.iter().enumerate() {
-            write!(f, "({}, {})", b, e)?;
-            if i != self.0.len() - 1 {
-                write!(f, ", ")?;
+        if self.0.len() == 1 {
+            write!(f, "{}", self.0[0].1)
+        } else {
+            writeln!(f, "Switch(")?;
+            for (b, e) in self.0.iter() {
+                writeln!(f, "{}, {}", b, e)?;
             }
+            write!(f, ")")
         }
-        write!(f, ")")
     }
 }
 
@@ -232,7 +233,7 @@ impl Display for Predicate {
 
 impl Display for Match {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        write!(f, "({}, {}, {})", self.v, self.r, self.k)
+        write!(f, "(v{}, {}, {})", self.v + 1, self.r, self.k)
     }
 }
 
@@ -305,8 +306,8 @@ impl Display for Token {
 impl Display for Special {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
-            Special::Is(c) => write!(f, "{c}"),
-            Special::Not(c) => write!(f, "Not({c})"),
+            Special::Is(c) => write!(f, "'{c}'"),
+            Special::Not(c) => write!(f, "Not('{c}')"),
             Special::Start => write!(f, "start"),
             Special::End => write!(f, "end"),
         }
