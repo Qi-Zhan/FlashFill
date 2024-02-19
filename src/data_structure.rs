@@ -15,18 +15,16 @@ pub trait IntersectSize {
     where
         Self: std::marker::Sized;
     fn size(&self) -> usize;
-    /// unify is same as intersect most time
-    ///
-    /// only difference between unify and intersect is Unify CPos(k1, k2)
+
     fn unify(&self, other: &Self) -> Option<Self>
     where
-        Self: std::marker::Sized,
-    {
-        self.intersect(other)
-    }
+        Self: std::marker::Sized;
+
     type Instance;
     /// instantiation to get all programs
     fn all(&self) -> Vec<Self::Instance>;
+    // /// instantiation to get one program
+    // fn one(&self) -> Self::Instance;
 }
 
 /// A set of string programs
@@ -77,6 +75,10 @@ impl IntersectSize for ProgramSet {
         unreachable!()
     }
 
+    fn unify(&self, _other: &Self) -> Option<Self> {
+        unreachable!()
+    }
+
     fn size(&self) -> usize {
         self.0.iter().fold(1, |acc, x| acc * x.1.size())
     }
@@ -91,6 +93,13 @@ impl IntersectSize for ProgramSet {
             .map(|f| StringExpr(bools.clone().zip(f).collect_vec()))
             .collect_vec()
     }
+
+    // fn one(&self) -> Self::Instance {
+    //     let switches = &self.0;
+    //     let bools = switches.iter().map(|(b, _)| b.clone());
+    //     let es = switches.iter().map(|f| f.1.one());
+    //     StringExpr(bools.zip(es).collect_vec())
+    // }
 }
 
 /// util struct to map (usize, usize) to usize
@@ -109,6 +118,38 @@ impl MapUtil {
 }
 
 impl IntersectSize for Dag {
+    fn unify(&self, other: &Self) -> Option<Self> {
+        let map = MapUtil::new(self.target - self.source + 1);
+        let source = map.get(self.source, other.source);
+        let target = map.get(self.target, other.target);
+        let nodes: HashSet<Node> = HashSet::from_iter(source..=target);
+        let mut w = HashMap::new();
+        for (&(i1, i2), w1) in &self.w {
+            for (&(j1, j2), w2) in &other.w {
+                let k1 = map.get(i1, j1);
+                let k2 = map.get(i2, j2);
+                let f12 = w1
+                    .iter()
+                    .flat_map(|f1| w2.iter().flat_map(|f2| f1.unify(f2)).collect_vec())
+                    .collect_vec();
+                if !f12.is_empty() {
+                    w.insert((k1, k2), f12);
+                }
+            }
+        }
+        let dag = Dag {
+            nodes,
+            source,
+            target,
+            w,
+        };
+        // We cannot tell the intersection is valid if there exist no valid path from src to target
+        if !dag.exists_path() {
+            return None;
+        }
+        Some(dag)
+    }
+
     fn intersect(&self, other: &Self) -> Option<Self> {
         let map = MapUtil::new(self.target - self.source + 1);
         let source = map.get(self.source, other.source);
@@ -208,6 +249,47 @@ impl IntersectSize for AtomicSet {
         }
     }
 
+    fn unify(&self, other: &Self) -> Option<Self> {
+        match (self, other) {
+            (
+                AtomicSet::SubStr {
+                    v: v1,
+                    p1: p11,
+                    p2: p12,
+                },
+                AtomicSet::SubStr {
+                    v: v2,
+                    p1: p21,
+                    p2: p22,
+                },
+            ) => {
+                if v1 != v2 {
+                    None
+                } else {
+                    let v = *v1;
+                    let p1: Vec<_> = p11
+                        .iter()
+                        .cartesian_product(p21.iter())
+                        .flat_map(|(a, b)| a.unify(b))
+                        .collect();
+                    if p1.is_empty() {
+                        return None;
+                    }
+                    let p2: Vec<_> = p12
+                        .iter()
+                        .cartesian_product(p22.iter())
+                        .flat_map(|(a, b)| a.unify(b))
+                        .collect();
+                    if p2.is_empty() {
+                        return None;
+                    }
+                    Some(AtomicSet::SubStr { v, p1, p2 })
+                }
+            }
+            _ => None,
+        }
+    }
+
     fn size(&self) -> usize {
         match self {
             AtomicSet::SubStr { v: _, p1, p2 } => {
@@ -266,18 +348,25 @@ impl IntersectSize for PositionSet {
         }
     }
 
-    fn unify(&self, other: &Self) -> Option<Self>
-    where
-        Self: std::marker::Sized,
-    {
-        if let (PositionSet::CPos(k1), PositionSet::CPos(k2)) = (self, other) {
-            if k1 != k2 {
-                todo!()
-            } else {
-                Some(PositionSet::CPos(*k1))
+    fn unify(&self, other: &Self) -> Option<Self> {
+        match (self, other) {
+            (
+                PositionSet::Pos { r1, r2, c: _ },
+                PositionSet::Pos {
+                    r1: r3,
+                    r2: r4,
+                    c: _,
+                },
+            ) => {
+                let r1 = r1.intersect(r3)?;
+                let r2 = r2.intersect(r4)?;
+                Some(PositionSet::Pos {
+                    r1,
+                    r2,
+                    c: HashSet::from([IntegerExpr::Bound]),
+                })
             }
-        } else {
-            self.intersect(other)
+            _ => None,
         }
     }
 
@@ -347,6 +436,10 @@ impl IntersectSize for RegularSet {
             .map(|f| RegularExpr(f.into_iter().copied().collect_vec()))
             .collect_vec()
     }
+
+    fn unify(&self, other: &Self) -> Option<Self> {
+        self.intersect(other)
+    }
 }
 
 impl<T: Copy + Eq + std::hash::Hash> IntersectSize for HashSet<T> {
@@ -371,6 +464,10 @@ impl<T: Copy + Eq + std::hash::Hash> IntersectSize for HashSet<T> {
 
     fn all(&self) -> Vec<Self::Instance> {
         self.iter().copied().collect_vec()
+    }
+
+    fn unify(&self, other: &Self) -> Option<Self> {
+        self.intersect(other)
     }
 }
 

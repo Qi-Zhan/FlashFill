@@ -122,6 +122,9 @@ impl Eval for AtomicExpr {
                 let p1 = eval(p1, &sigma[*v])?;
                 let p2 = eval(p2, &sigma[*v])?;
                 // Paper use [p1..p2] and [p1..=p2] mix!
+                if p1 > p2 {
+                    return None;
+                }
                 Some(sigma[*v][p1..p2].to_string())
             }
             AtomicExpr::ConstStr(s) => Some(s.clone()),
@@ -231,28 +234,27 @@ impl RegularExpr {
                 return vec![(s.len() as i32, s.len() as i32 - 1)].into_iter();
             }
             unimplemented!("not only single endTok");
-        } else {
-            if self.0.is_empty() {
-                // return all possible range
-                return (0..(s.len() + 1) as i32)
-                    .zip(-1..s.len() as i32)
-                    .collect::<Vec<_>>()
-                    .into_iter();
-            }
-            let mut v = vec![];
-            let mut start = 0;
-            'outer: while start < s.len() {
-                for end in (start..s.len()).rev() {
-                    if self.eval(&s[start..=end]) {
-                        v.push((start as i32, end as i32));
-                        start = end + 1;
-                        continue 'outer;
-                    }
-                }
-                start += 1;
-            }
-            v.into_iter()
         }
+        if self.0.is_empty() {
+            // return all possible range
+            return (0..(s.len() + 1) as i32)
+                .zip(-1..s.len() as i32)
+                .collect::<Vec<_>>()
+                .into_iter();
+        }
+        let mut v = vec![];
+        let mut start = 0;
+        'outer: while start < s.len() {
+            for end in (start..s.len()).rev() {
+                if self.eval(&s[start..=end]) {
+                    v.push((start as i32, end as i32));
+                    start = end + 1;
+                    continue 'outer;
+                }
+            }
+            start += 1;
+        }
+        v.into_iter()
     }
 }
 

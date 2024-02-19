@@ -23,9 +23,8 @@ lazy_static! {
             tokens.push(Token::Special(Special::Is(s)));
         }
         for c in classes {
-            // TODO:
-            // tokens.push(Token::ExcludeOneOrMore(c));
             tokens.push(Token::OneOrMore(c));
+            tokens.push(Token::ExcludeOneOrMore(c));
         }
         tokens
     };
@@ -35,7 +34,7 @@ lazy_static! {
         .iter()
         .map(|tokens| RegularExpr(vec![*tokens]))
         .collect_vec();
-        all.push(RegularExpr::empty());
+        all.insert(0, RegularExpr::empty());
         all
     };
 }

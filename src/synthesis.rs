@@ -29,7 +29,7 @@ pub fn generate_string_program(pairs: &[(InputState, String)]) -> StringExpr {
             (b, e)
         })
         .collect();
-    switches.sort_by(|a, b| a.1.size().cmp(&b.1.size()));
+    switches.sort_by_key(|dag| dag.1.size());
     let program_set = ProgramSet(switches);
     program_set
         .all()
@@ -168,8 +168,7 @@ fn generate_str(sigma: &InputState, s: &str, loop_: bool) -> Dag {
         }
     }
     if loop_ {
-        // TODO: Consider LOOP later
-        // w = generate_loop(sigma, s, w);
+        w = generate_loop(sigma, s, w);
     }
     Dag {
         nodes,
@@ -186,16 +185,18 @@ fn generate_loop(
 ) -> HashMap<Edge, Vec<AtomicSet>> {
     for k1 in 0..s.len() {
         for k2 in k1..s.len() {
-            for k3 in k2..s.len() {
+            'outer: for k3 in k2..s.len() {
                 let e1 = generate_str(sigma, &s[k1..=k2], false); // only recursive once
                 let e2 = generate_str(sigma, &s[k2..=k3], false); // only recursive once
                 let e = e1.unify(&e2);
                 if let Some(e) = e {
-                    for k4 in k1..s.len() {
-                        // TODO: right condition
-                        if true {
+                    for trace in e.all() {
+                        let eval = AtomicExpr::Loop { e: trace }.eval(sigma).unwrap();
+                        if s[k1..].starts_with(&eval) {
+                            let k4 = k1 + eval.len();
                             w.entry((k1, k4))
                                 .and_modify(|f| f.push(AtomicSet::Loop { e: e.clone() }));
+                            continue 'outer;
                         }
                     }
                 }
