@@ -16,4 +16,8 @@ src/
 
 ## Tests
 
-tests are located in `src/eval.rs` and `src/synthesis` can be run with `cargo test`.
+Tests are located in `src/eval.rs` can be run with `cargo test`.
+
+## Examples
+
+See `examples` for simple examples, mainly written for testing the synthesis algorithm.

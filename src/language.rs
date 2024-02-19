@@ -4,6 +4,42 @@
 
 use std::fmt::{self, Display, Formatter};
 
+use itertools::Itertools;
+use lazy_static::lazy_static;
+
+lazy_static! {
+    static ref ALLTOKENS: Vec<Token> = {
+        let specials = ['/', '-', '(', ')', '.', ','];
+        let _ = specials.iter().map(|c| Token::Special(Special::Is(*c)));
+        let classes = [
+            TokenClass::Alpha,
+            TokenClass::Lower,
+            TokenClass::Upper,
+            TokenClass::Num,
+            TokenClass::Space,
+        ];
+        let mut tokens = vec![];
+        for s in specials {
+            tokens.push(Token::Special(Special::Is(s)));
+        }
+        for c in classes {
+            // TODO:
+            // tokens.push(Token::ExcludeOneOrMore(c));
+            tokens.push(Token::OneOrMore(c));
+        }
+        tokens
+    };
+    // all tokenseqs are limited now
+    pub static ref ALLTOKENSEQS: Vec<RegularExpr> = {
+        let mut all = ALLTOKENS
+        .iter()
+        .map(|tokens| RegularExpr(vec![*tokens]))
+        .collect_vec();
+        all.push(RegularExpr::empty());
+        all
+    };
+}
+
 /// String expr P := Switch((b1, e1), ..., (bn, en))
 #[derive(Debug, Clone)]
 pub struct StringExpr(pub Vec<(Bool, TraceExpr)>);
@@ -101,7 +137,7 @@ pub enum TokenClass {
     Alpha,
     Upper,
     Lower,
-    WhileSpace,
+    Space,
 }
 
 pub type FreeString = usize;
@@ -109,6 +145,10 @@ pub type FreeString = usize;
 impl RegularExpr {
     pub fn empty() -> Self {
         Self(vec![])
+    }
+
+    pub fn concat(&self, other: &Self) -> Self {
+        Self(itertools::concat([self.0.clone(), other.0.clone()]))
     }
 }
 
@@ -257,7 +297,7 @@ impl Display for Token {
         match self {
             Token::Special(s) => write!(f, "{}", s),
             Token::OneOrMore(tc) => write!(f, "{}+", tc),
-            Token::ExcludeOneOrMore(tc) => write!(f, "!{}+", tc),
+            Token::ExcludeOneOrMore(tc) => write!(f, "Not({}+)", tc),
         }
     }
 }
@@ -266,7 +306,7 @@ impl Display for Special {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             Special::Is(c) => write!(f, "{c}"),
-            Special::Not(c) => write!(f, "!{c}"),
+            Special::Not(c) => write!(f, "Not({c})"),
             Special::Start => write!(f, "start"),
             Special::End => write!(f, "end"),
         }
@@ -280,7 +320,7 @@ impl Display for TokenClass {
             TokenClass::Alpha => write!(f, "AlphaTok"),
             TokenClass::Upper => write!(f, "UpperTok"),
             TokenClass::Lower => write!(f, "LowerTok"),
-            TokenClass::WhileSpace => write!(f, "NonSpaceTok"),
+            TokenClass::Space => write!(f, "Space"),
         }
     }
 }

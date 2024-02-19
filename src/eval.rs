@@ -63,16 +63,14 @@ impl EvalBool<&InputState> for Match {
     fn eval(&self, sigma: &InputState) -> bool {
         let s = &sigma[self.v];
         let r = &self.r;
-        r.find_all_matches(s).collect::<Vec<_>>().len() >= self.k
+        r.find_all_matches(s).count() >= self.k
     }
 }
 
 impl EvalBool<&str> for RegularExpr {
     fn eval(&self, s: &str) -> bool {
-        // empty sequence + empty string
-        if s.is_empty() {
-            return self.0.is_empty();
-        }
+        // we already consider empty regex
+        assert!(!self.0.is_empty());
         let mut s = s.chars().peekable();
         for token in &self.0 {
             // exist other token to match but string end
@@ -200,7 +198,6 @@ fn eval(p: &Position, s: &str) -> Option<usize> {
             // t  <= t2 or t2 = t - 1()
             for (_t1, t3) in r1.find_all_matches(s) {
                 for (t, _t2) in r2.find_all_matches(s) {
-                    println!("[{_t1}, {t3}], [{t}, {_t2}]");
                     if t3 == t - 1 {
                         matched_t.push(t as usize);
                     }
@@ -219,7 +216,7 @@ fn eval(p: &Position, s: &str) -> Option<usize> {
 }
 
 impl RegularExpr {
-    fn find_all_matches(&self, s: &str) -> impl Iterator<Item = (isize, isize)> {
+    pub fn find_all_matches(&self, s: &str) -> impl Iterator<Item = (i32, i32)> {
         if self.0.contains(&Token::Special(Special::Start)) {
             let mut r = self.clone();
             r.0.remove(0);
@@ -231,14 +228,14 @@ impl RegularExpr {
             let mut r = self.clone();
             r.0.remove(r.0.len() - 1);
             if r.0.is_empty() {
-                return vec![(s.len() as isize, s.len() as isize - 1)].into_iter();
+                return vec![(s.len() as i32, s.len() as i32 - 1)].into_iter();
             }
             unimplemented!("not only single endTok");
         } else {
             if self.0.is_empty() {
                 // return all possible range
-                return (0..(s.len() + 1) as isize)
-                    .zip(-1..s.len() as isize)
+                return (0..(s.len() + 1) as i32)
+                    .zip(-1..s.len() as i32)
                     .collect::<Vec<_>>()
                     .into_iter();
             }
@@ -247,7 +244,7 @@ impl RegularExpr {
             'outer: while start < s.len() {
                 for end in (start..s.len()).rev() {
                     if self.eval(&s[start..=end]) {
-                        v.push((start as isize, end as isize));
+                        v.push((start as i32, end as i32));
                         start = end + 1;
                         continue 'outer;
                     }
@@ -259,14 +256,20 @@ impl RegularExpr {
     }
 }
 
+impl Token {
+    pub fn find_all_matches(&self, s: &str) -> impl Iterator<Item = (i32, i32)> {
+        RegularExpr(vec![*self]).find_all_matches(s)
+    }
+}
+
 impl TokenClass {
     fn matched(&self, c: &char) -> bool {
         match self {
             TokenClass::Num => '0' <= *c && *c <= '9',
-            TokenClass::Alpha => c.is_alphabetic(),
+            TokenClass::Alpha => 'a' <= *c && *c <= 'z' || 'A' <= *c && *c <= 'Z',
             TokenClass::Upper => c.is_ascii_uppercase(),
             TokenClass::Lower => c.is_ascii_lowercase(),
-            TokenClass::WhileSpace => c.is_whitespace(),
+            TokenClass::Space => c.is_whitespace(),
         }
     }
 }
@@ -311,7 +314,6 @@ mod tests {
         let p2 = AtomicExpr::SubStr {
             v: 0,
             p1: Position::Pos {
-                // match epsilon, empty string
                 r1: RegularExpr::empty(),
                 r2: Token::OneOrMore(TokenClass::Num).into(),
                 c: IntegerExpr::Constant(1),
@@ -399,14 +401,14 @@ mod tests {
     fn test6() {
         let pos1 = Position::Pos {
             r1: RegularExpr::empty(),
-            r2: Token::ExcludeOneOrMore(TokenClass::WhileSpace).into(),
+            r2: Token::ExcludeOneOrMore(TokenClass::Space).into(),
             c: IntegerExpr::Bound,
         };
         let pos2 = Position::Pos {
-            r1: Token::ExcludeOneOrMore(TokenClass::WhileSpace).into(),
+            r1: Token::ExcludeOneOrMore(TokenClass::Space).into(),
             r2: RegularExpr(vec![
-                Token::OneOrMore(TokenClass::WhileSpace),
-                Token::ExcludeOneOrMore(TokenClass::WhileSpace),
+                Token::OneOrMore(TokenClass::Space),
+                Token::ExcludeOneOrMore(TokenClass::Space),
             ]),
             c: IntegerExpr::Bound,
         };
@@ -423,7 +425,7 @@ mod tests {
             },
             sub_str2(
                 0,
-                Token::ExcludeOneOrMore(TokenClass::WhileSpace).into(),
+                Token::ExcludeOneOrMore(TokenClass::Space).into(),
                 IntegerExpr::Constant(-1),
             ),
         ]);
@@ -754,7 +756,6 @@ mod tests {
                 IntegerExpr::Constant(-1),
             ),
         ]);
-        println!("{}", p14);
         for s in EXAMPLE14.iter() {
             let (sigma, expected) = split(s);
             assert_eq!(p14.eval(&sigma), Some(expected));
