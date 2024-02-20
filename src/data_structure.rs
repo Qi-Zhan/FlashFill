@@ -23,8 +23,6 @@ pub trait IntersectSize {
     type Instance;
     /// instantiation to get all programs
     fn all(&self) -> Vec<Self::Instance>;
-    // /// instantiation to get one program
-    // fn one(&self) -> Self::Instance;
 }
 
 /// A set of string programs
@@ -93,13 +91,6 @@ impl IntersectSize for ProgramSet {
             .map(|f| StringExpr(bools.clone().zip(f).collect_vec()))
             .collect_vec()
     }
-
-    // fn one(&self) -> Self::Instance {
-    //     let switches = &self.0;
-    //     let bools = switches.iter().map(|(b, _)| b.clone());
-    //     let es = switches.iter().map(|f| f.1.one());
-    //     StringExpr(bools.zip(es).collect_vec())
-    // }
 }
 
 /// util struct to map (usize, usize) to usize
